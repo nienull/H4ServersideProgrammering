@@ -1,0 +1,147 @@
+﻿@page "/"
+@rendermode InteractiveServer
+
+
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "AuthenticatedUser")]
+@inject AuthenticationStateProvider _authenticationStateProvider;
+@inject Models.TodoContext _toDoContext;
+@inject Codes.SymetriskEncryptionHandler _encryptionHandler;
+@inject Codes.AsymetriskEncryptionHandler _asymetriskEncryptionHandler;
+
+<PageTitle>Home</PageTitle>
+
+<h3 style="text-align:center;margin-top:10px;">User: @UserName</h3>
+<hr />
+
+@if (CprFromDB == null)
+{
+    <div class="col-md-2" style="margin:0 auto;padding-left:20px;">
+        <div>Indtast dit cpr-nr:</div>
+        <input type="text" @bind="CprNr" style="width:150px;" />
+        <br />
+        <button class="btn-primary" @onclick="btnSubmitCpr_clicked" style="width:150px;height:45px;margin-top:4px;">Submit</button>
+        @if (CprMessage != null)
+        {
+            <div>@CprMessage</div>
+        }
+    </div>
+}
+else
+{
+    <div style="text-align:center;">Dit cpr-nr: @CprFromDB</div>
+    <div class="col-md-2" style="margin:0 auto;padding-left:20px;">
+        <div style="margin-top:20px;">Indtast todo:</div>
+        <input type="text" @bind="ToDoItem" style="width:150px;" />
+        <br />
+        <button class="btn-primary" @onclick="btnSubmitTodoItem_clicked" style="width:150px;height:45px;margin-top:4px;">Submit</button>
+        @if (Message != null)
+        {
+            <div>@Message</div>
+        }
+    </div>
+}
+<div style="margin-top:18px;">
+    @if (TodoList != null && TodoList.Count > 0)
+    {
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>My to do items</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (TodoList != null && TodoList.Count > 0)
+                {
+                    @foreach (var item in TodoList)
+                    {
+                        <tr>
+                            <td>@_asymetriskEncryptionHandler.DecryptAsymetrisk(@item.Item)</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private string? UserName { get; set; }
+    private string? CprNr { get; set; }
+    private string? CprFromDB { get; set; }
+    private string? ToDoItem { get; set; } = "";
+    private List<H4ServersideProgrammering.Models.Todolist>? TodoList { get; set; } = new List<H4ServersideProgrammering.Models.Todolist>();
+    private string? Message { get; set; }
+    private string? CprMessage { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await _authenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        UserName= user.Identity.Name;
+
+        bool isAuthenticated = user.Identity.IsAuthenticated;
+        bool isAuthorized = user.IsInRole("Admin");
+    }
+
+    private void btnSubmitCpr_clicked()
+    {
+        string cprHashed = Codes.HashingHandler.BCryptHashing(CprNr);
+
+        var matchedUser = _toDoContext.Cprs.FirstOrDefault(x => x.User == UserName);
+        if (matchedUser == null)
+        {
+            var cpr = new H4ServersideProgrammering.Models.Cpr
+            {
+                User = UserName,
+                CprNr = cprHashed
+            };
+            _toDoContext.Cprs.Add(cpr);
+            _toDoContext.SaveChanges();
+
+            CprFromDB = _toDoContext.Cprs.FirstOrDefault(x => x.User == UserName)?.CprNr;
+        }
+        else
+        {
+            bool hashedValueMatch = Codes.HashingHandler.BCryptVerifyHashing(CprNr, matchedUser.CprNr);
+            if (hashedValueMatch)
+            {
+                TodoList = _toDoContext.Todolists.ToList().Where(x => x.User == UserName).ToList();
+                CprFromDB = _toDoContext.Cprs.FirstOrDefault(x => x.User == UserName)?.CprNr;
+                CprMessage = null;
+            }
+            else
+            {
+                CprMessage = "Cpr-nr er forkert!";
+            }
+        }
+    }
+
+    private void btnSubmitTodoItem_clicked()
+    {
+        // Check if the list has changed
+        HashSet<int> hashSet2 = new HashSet<int>(TodoList.Select(item => item.GetHashCode()));
+
+        var todoListTemp = _toDoContext.Todolists.ToList();
+        todoListTemp = todoListTemp.Where(x => x.User == UserName).ToList();
+        HashSet<int> hashSet1 = new HashSet<int>(todoListTemp.Select(item => item.GetHashCode()));
+
+        bool areListsEqual = hashSet1.SetEquals(hashSet2);
+        if (areListsEqual)
+        {
+            var todo = new H4ServersideProgrammering.Models.Todolist{
+                User = UserName,
+                Item = _asymetriskEncryptionHandler.EncryptAsymetrisk(ToDoItem)
+            };
+            _toDoContext.Todolists.Add(todo);
+            _toDoContext.SaveChanges();
+
+            TodoList = _toDoContext.Todolists.ToList().Where(x => x.User == UserName).ToList();
+            Message = "No manipulation with db found!";
+        }
+        else
+        {
+            Message = "Manipulation found on db!";
+        }
+    }
+}
